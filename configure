@@ -327,6 +327,7 @@ mpath="auto"
 vnc="enabled"
 sparse="auto"
 vde="$default_feature"
+vmnet="auto"
 vnc_sasl="auto"
 vnc_jpeg="auto"
 vnc_png="auto"
@@ -1078,6 +1079,10 @@ for opt do
   --disable-vde) vde="no"
   ;;
   --enable-vde) vde="yes"
+  ;;
+  --disable-vmnet) vmnet="no"
+  ;;
+  --enable-vmnet) vmnet="yes"
   ;;
   --disable-netmap) netmap="no"
   ;;
@@ -1852,6 +1857,7 @@ disabled with --disable-FEATURE, default is enabled if available
   rdma            Enable RDMA-based migration
   pvrdma          Enable PVRDMA support
   vde             support for vde network
+  vmnet           vmnet.framework support (macOS)
   netmap          support for netmap network
   linux-aio       Linux AIO support
   linux-io-uring  Linux io_uring support
@@ -3141,6 +3147,28 @@ EOF
       feature_not_found "vde" "Install vde (Virtual Distributed Ethernet) devel"
     fi
     vde=no
+  fi
+fi
+
+##########################################
+# vmnet.framework probe
+if test "$vmnet" != "no" ; then
+  vmnet_flags="-framework vmnet"
+  cat > $TMPC << EOF
+#include <vmnet/vmnet.h>
+int main(void)
+{
+    (void) vmnet_allocate_mac_address_key;
+    return 0;
+}
+EOF
+  if compile_prog "" "$vmnet_flags" ; then
+    vmnet=yes
+  else
+    if test "$vmnet" = "yes" ; then
+      feature_not_found "vmnet" "'vmnet.framework' in unsupported in this build"
+    fi
+    vmnet=no
   fi
 fi
 
@@ -5534,6 +5562,9 @@ echo "CONFIG_SMBD_COMMAND=\"$smbd\"" >> $config_host_mak
 if test "$vde" = "yes" ; then
   echo "CONFIG_VDE=y" >> $config_host_mak
   echo "VDE_LIBS=$vde_libs" >> $config_host_mak
+fi
+if test "$vmnet" = "yes" ; then
+  echo "CONFIG_VMNET=y" >> $config_host_mak
 fi
 if test "$netmap" = "yes" ; then
   echo "CONFIG_NETMAP=y" >> $config_host_mak
