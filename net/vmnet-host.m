@@ -27,7 +27,7 @@ static xpc_object_t create_if_desc(const Netdev *netdev, Error **errp);
 static NetClientInfo net_vmnet_host_info = {
     .type = NET_CLIENT_DRIVER_VMNET_HOST,
     .size = sizeof(VmnetHostState),
-    .can_receive = vmnet_can_receive_common,
+    .poll = vmnet_poll_common,
     .receive_iov = vmnet_receive_iov_common,
 };
 
