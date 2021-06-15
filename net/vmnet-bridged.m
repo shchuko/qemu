@@ -27,6 +27,7 @@ static NetClientInfo net_vmnet_bridged_info = {
     .size = sizeof(VmnetBridgedState),
     .poll = vmnet_poll_common,
     .receive_iov = vmnet_receive_iov_common,
+    .cleanup = vmnet_cleanup_common,
 };
 
 static xpc_object_t create_if_desc(const Netdev *netdev, Error **errp);
