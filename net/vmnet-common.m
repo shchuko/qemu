@@ -1,5 +1,5 @@
 /*
- * vmnet.c - network client wrapper for Apple vmnet.framework
+ * vmnet-common.m - network client wrapper for Apple vmnet.framework
  *
  * Copyright(c) 2021 Vladislav Yaroshchuk <yaroshchuk2000@gmail.com>
  * Copyright(c) 2021 Phillip Tennen <phillip@axleos.com>
@@ -20,6 +20,9 @@
 #include <vmnet/vmnet.h>
 #include <dispatch/dispatch.h>
 
+typedef struct vmpktdesc vmpktdesc_t;
+typedef struct iovec iovec_t;
+
 static void vmnet_read_poll(NetClientState *nc, bool enable);
 
 static void vmnet_write_poll(NetClientState *nc, bool enable);
@@ -30,8 +33,8 @@ static bool vmnet_can_write(NetClientState *nc);
 
 static void vmnet_bufs_init(VmnetCommonState *s);
 
-static struct vmpktdesc *iov_to_packets(const struct iovec *iov, int iovcnt,
-                                        uint64_t max_packet_size, int *pkt_cnt);
+static vmpktdesc_t *iov_to_packets(const iovec_t *iov, int iovcnt,
+                                   uint64_t max_packet_size, int *pkt_cnt);
 
 static void vmnet_read_handler(NetClientState *nc,
                                interface_event_t event_id,
@@ -87,11 +90,11 @@ int vmnet_if_create(NetClientState *nc,
     s->vmnet_if = vmnet_start_interface(
         if_desc,
         if_create_q,
-        ^ (vmnet_return_t status, xpc_object_t interface_param) {
+        ^(vmnet_return_t status, xpc_object_t interface_param) {
           if_status = status;
           if (status != VMNET_SUCCESS || !interface_param) {
-                dispatch_semaphore_signal(if_created_sem);
-                return;
+              dispatch_semaphore_signal(if_created_sem);
+              return;
           }
 
           s->mtu = xpc_dictionary_get_uint64(
@@ -102,7 +105,7 @@ int vmnet_if_create(NetClientState *nc,
               vmnet_max_packet_size_key);
 
           if (completion_callback) {
-                completion_callback(interface_param);
+              completion_callback(interface_param);
           }
           dispatch_semaphore_signal(if_created_sem);
         });
@@ -141,12 +144,12 @@ bool vmnet_can_receive_common(NetClientState *nc)
 }
 
 ssize_t vmnet_receive_iov_common(NetClientState *nc,
-                                 const struct iovec *iov,
+                                 const iovec_t *iov,
                                  int iovcnt)
 {
     VmnetCommonState *s;
 
-    struct vmpktdesc *packets;
+    vmpktdesc_t *packets;
     int pkt_cnt;
     int pkt_cnt_written;
 
@@ -192,13 +195,11 @@ ssize_t vmnet_receive_iov_common(NetClientState *nc,
 static void vmnet_bufs_init(VmnetCommonState *s)
 {
     int i;
-    struct vmpktdesc *packets;
-    struct iovec *iov;
+    vmpktdesc_t *packets;
+    iovec_t *iov;
 
-    s->iov_buf = g_new0(
-    struct iovec, VMNET_PACKETS_LIMIT);
-    s->packets_buf = g_new0(
-    struct vmpktdesc, VMNET_PACKETS_LIMIT);
+    s->iov_buf = g_new0(iovec_t, VMNET_PACKETS_LIMIT);
+    s->packets_buf = g_new0(vmpktdesc_t, VMNET_PACKETS_LIMIT);
 
     packets = s->packets_buf;
     iov = s->iov_buf;
@@ -214,11 +215,11 @@ static void vmnet_bufs_init(VmnetCommonState *s)
     }
 }
 
-static struct vmpktdesc *iov_to_packets(const struct iovec *iov, int iovcnt,
-                                        uint64_t max_packet_size, int *pkt_cnt)
+static vmpktdesc_t *iov_to_packets(const iovec_t *iov, int iovcnt,
+                                   uint64_t max_packet_size, int *pkt_cnt)
 {
     int iov_no;
-    struct vmpktdesc *packets;
+    vmpktdesc_t *packets;
     size_t total_size;
 
     total_size = 0;
@@ -228,15 +229,13 @@ static struct vmpktdesc *iov_to_packets(const struct iovec *iov, int iovcnt,
 
     /* Collect all the iovecs into one packet */
     *pkt_cnt = 1;
-    packets = g_new0(
-    struct vmpktdesc, *pkt_cnt);
+    packets = g_new0(vmpktdesc_t, *pkt_cnt);
 
     packets[0].vm_pkt_iovcnt = iovcnt;
     packets[0].vm_flags = 0;
     packets[0].vm_pkt_size = total_size;
-    packets[0].vm_pkt_iov = g_new0(
-    struct iovec, iovcnt);
-    memcpy(packets[0].vm_pkt_iov, iov, iovcnt * sizeof(struct iovec));
+    packets[0].vm_pkt_iov = g_new0(iovec_t, iovcnt);
+    memcpy(packets[0].vm_pkt_iov, iov, iovcnt * sizeof(iovec_t));
 
     return packets;
 }
@@ -251,8 +250,8 @@ static void vmnet_read_handler(NetClientState *nc,
     VmnetCommonState *s;
     uint64_t packets_available;
 
-    struct iovec *iov;
-    struct vmpktdesc *packets;
+    iovec_t *iov;
+    vmpktdesc_t *packets;
     int pkt_cnt;
     int i;
 
@@ -318,7 +317,7 @@ static void vmnet_read_poll(NetClientState *nc, bool enable)
             s->vmnet_if,
             VMNET_INTERFACE_PACKETS_AVAILABLE,
             s->avail_pkt_q,
-            ^ (interface_event_t event_id, xpc_object_t event) {
+            ^(interface_event_t event_id, xpc_object_t event) {
               qemu_mutex_lock_iothread();
               vmnet_read_handler(nc, event_id, event);
               qemu_mutex_unlock_iothread();

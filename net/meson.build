@@ -39,10 +39,10 @@ softmmu_ss.add(when: 'CONFIG_WIN32', if_true: files('tap-win32.c'))
 softmmu_ss.add(when: 'CONFIG_VHOST_NET_VDPA', if_true: files('vhost-vdpa.c'))
 
 vmnet_files = files(
-  'vmnet-common.c',
-  'vmnet-bridged.c',
-  'vmnet-host.c',
-  'vmnet-shared.c'
+  'vmnet-common.m',
+  'vmnet-bridged.m',
+  'vmnet-host.m',
+  'vmnet-shared.m'
 )
 softmmu_ss.add(when: ['CONFIG_VMNET', vmnet], if_true: vmnet_files)
 subdir('can')
