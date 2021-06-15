@@ -29,9 +29,6 @@ static void vmnet_write_poll(NetClientState *nc, bool enable);
 
 static void vmnet_bufs_init(VmnetCommonState *s);
 
-static vmpktdesc_t *iov_to_packets(const iovec_t *iov, int iovcnt,
-                                   uint64_t max_packet_size, int *pkt_cnt);
-
 static void vmnet_create_event_pipe(VmnetCommonState *s);
 
 static void vmnet_send(void *opaque);
@@ -150,48 +147,43 @@ ssize_t vmnet_receive_iov_common(NetClientState *nc,
                                  int iovcnt)
 {
     VmnetCommonState *s;
-
-    vmpktdesc_t *packets;
+    vmpktdesc_t packet;
     int pkt_cnt;
-    int pkt_cnt_written;
-
-    size_t bytes_written;
-    int i;
-
+    int iov_no;
     vmnet_return_t if_status;
 
     s = DO_UPCAST(VmnetCommonState, nc, nc);
 
-    packets = iov_to_packets(iov, iovcnt, s->max_packet_size, &pkt_cnt);
-    if (pkt_cnt == -1) {
-        return 0;
+    packet.vm_pkt_iovcnt = iovcnt;
+    packet.vm_flags = 0;
+    packet.vm_pkt_size = 0;
+    for (iov_no = 0; iov_no < iovcnt; ++iov_no) {
+        packet.vm_pkt_size += iov[iov_no].iov_len;
     }
 
-    pkt_cnt_written = pkt_cnt;
-    if_status = vmnet_write(s->vmnet_if, packets, &pkt_cnt_written);
+    if (packet.vm_pkt_size > s->max_packet_size) {
+        warn_report("vmnet: packet is too big, %zu > %llu\n",
+                    packet.vm_pkt_size,
+                    s->max_packet_size);
+        return -1;
+    }
+
+    packet.vm_pkt_iov = g_new0(iovec_t, iovcnt);
+    memcpy(packet.vm_pkt_iov, iov, iovcnt * sizeof(iovec_t));
+
+    pkt_cnt = 1;
+    if_status = vmnet_write(s->vmnet_if, &packet, &pkt_cnt);
 
     if (if_status != VMNET_SUCCESS) {
-        error_printf("vmnet: write error: %s\n",
+        error_report("vmnet: write error: %s\n",
                      vmnet_status_map_str(if_status));
-        return 0;
     }
 
-    if (pkt_cnt_written != pkt_cnt) {
-        error_printf("vmnet: %d packets dropped on write\n",
-                     pkt_cnt - pkt_cnt_written);
+    g_free(packet.vm_pkt_iov);
+    if (if_status == VMNET_SUCCESS && pkt_cnt) {
+        return packet.vm_pkt_size;
     }
-
-    bytes_written = 0;
-    for (i = 0; i < pkt_cnt_written; ++i) {
-        bytes_written += packets[i].vm_pkt_size;
-    }
-
-    for (i = 0; i < pkt_cnt; ++i) {
-        g_free(packets[i].vm_pkt_iov);
-    }
-    g_free(packets);
-
-    return bytes_written;
+    return 0;
 }
 
 static void vmnet_bufs_init(VmnetCommonState *s)
@@ -232,31 +224,6 @@ static void vmnet_create_event_pipe(VmnetCommonState *s)
           uint8_t dummy_byte;
           write(s->event_pipe_fd[1], &dummy_byte, 1);
         });
-}
-
-static vmpktdesc_t *iov_to_packets(const iovec_t *iov, int iovcnt,
-                                   uint64_t max_packet_size, int *pkt_cnt)
-{
-    int iov_no;
-    vmpktdesc_t *packets;
-    size_t total_size;
-
-    total_size = 0;
-    for (iov_no = 0; iov_no < iovcnt; ++iov_no) {
-        total_size += iov[iov_no].iov_len;
-    }
-
-    /* Collect all the iovecs into one packet */
-    *pkt_cnt = 1;
-    packets = g_new0(vmpktdesc_t, *pkt_cnt);
-
-    packets[0].vm_pkt_iovcnt = iovcnt;
-    packets[0].vm_flags = 0;
-    packets[0].vm_pkt_size = total_size;
-    packets[0].vm_pkt_iov = g_new0(iovec_t, iovcnt);
-    memcpy(packets[0].vm_pkt_iov, iov, iovcnt * sizeof(iovec_t));
-
-    return packets;
 }
 
 static void vmnet_send(void *opaque)
