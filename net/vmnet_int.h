@@ -28,10 +28,8 @@ typedef struct VmnetCommonState {
   uint64_t mtu;
   uint64_t max_packet_size;
 
-  struct vmpktdesc *packets_buf;
-  struct iovec *iov_buf;
-
-  dispatch_queue_t avail_pkt_q;
+  struct vmpktdesc packets_buf[VMNET_PACKETS_LIMIT];
+  struct iovec iov_buf[VMNET_PACKETS_LIMIT];
 
   int event_pipe_fd[2];
 } VmnetCommonState;
@@ -48,5 +46,7 @@ ssize_t vmnet_receive_iov_common(NetClientState *nc,
                                  int iovcnt);
 
 void vmnet_poll_common(NetClientState *nc, bool enable);
+
+void vmnet_cleanup_common(NetClientState *nc);
 
 #endif /* VMNET_INT_H */

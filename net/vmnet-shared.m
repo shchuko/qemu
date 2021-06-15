@@ -29,6 +29,7 @@ static NetClientInfo net_vmnet_shared_info = {
     .size = sizeof(VmnetSharedState),
     .poll = vmnet_poll_common,
     .receive_iov = vmnet_receive_iov_common,
+    .cleanup = vmnet_cleanup_common,
 };
 
 int net_init_vmnet_shared(const Netdev *netdev, const char *name,

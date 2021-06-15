@@ -29,6 +29,7 @@ static NetClientInfo net_vmnet_host_info = {
     .size = sizeof(VmnetHostState),
     .poll = vmnet_poll_common,
     .receive_iov = vmnet_receive_iov_common,
+    .cleanup = vmnet_cleanup_common,
 };
 
 int net_init_vmnet_host(const Netdev *netdev, const char *name,

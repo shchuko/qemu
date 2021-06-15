@@ -122,11 +122,6 @@ int vmnet_if_create(NetClientState *nc,
         return -1;
     }
 
-    s->avail_pkt_q = dispatch_queue_create(
-        "org.qemu.vmnet.if_queue",
-        DISPATCH_QUEUE_SERIAL
-    );
-
     vmnet_bufs_init(s);
 
     vmnet_create_event_pipe(s);
@@ -186,14 +181,43 @@ ssize_t vmnet_receive_iov_common(NetClientState *nc,
     return 0;
 }
 
+void vmnet_cleanup_common(NetClientState *nc)
+{
+    VmnetCommonState *s;
+    dispatch_queue_t if_destroy_q;
+
+    s = DO_UPCAST(VmnetCommonState, nc, nc);
+
+    qemu_purge_queued_packets(nc);
+    vmnet_read_poll(nc, false);
+    vmnet_write_poll(nc, false);
+
+    if (s->vmnet_if == NULL) {
+        return;
+    }
+
+    if_destroy_q = dispatch_queue_create(
+        "org.qemu.vmnet.destroy",
+        DISPATCH_QUEUE_SERIAL
+    );
+
+    vmnet_stop_interface(
+        s->vmnet_if,
+        if_destroy_q,
+        ^(vmnet_return_t status) {
+        });
+
+
+    for (int i = 0; i < VMNET_PACKETS_LIMIT; ++i) {
+        g_free(s->iov_buf[i].iov_base);
+    }
+}
+
 static void vmnet_bufs_init(VmnetCommonState *s)
 {
     int i;
     vmpktdesc_t *packets;
     iovec_t *iov;
-
-    s->iov_buf = g_new0(iovec_t, VMNET_PACKETS_LIMIT);
-    s->packets_buf = g_new0(vmpktdesc_t, VMNET_PACKETS_LIMIT);
 
     packets = s->packets_buf;
     iov = s->iov_buf;
@@ -201,17 +225,19 @@ static void vmnet_bufs_init(VmnetCommonState *s)
     for (i = 0; i < VMNET_PACKETS_LIMIT; ++i) {
         iov[i].iov_len = s->max_packet_size;
         iov[i].iov_base = g_malloc0(iov[i].iov_len);
-
         packets[i].vm_pkt_iov = iov + i;
-        packets[i].vm_pkt_size = s->max_packet_size;
-        packets[i].vm_flags = 0;
-        packets[i].vm_pkt_iovcnt = 1;
     }
 }
 
 static void vmnet_create_event_pipe(VmnetCommonState *s)
 {
+    dispatch_queue_t pkt_avail_q;
     assert(s->vmnet_if != NULL);
+
+    pkt_avail_q = dispatch_queue_create(
+        "org.qemu.vmnet.pkt_avail",
+        DISPATCH_QUEUE_SERIAL
+    );
 
     pipe(s->event_pipe_fd);
     fcntl(s->event_pipe_fd[0], F_SETFL, O_NONBLOCK);
@@ -219,7 +245,7 @@ static void vmnet_create_event_pipe(VmnetCommonState *s)
     vmnet_interface_set_event_callback(
         s->vmnet_if,
         VMNET_INTERFACE_PACKETS_AVAILABLE,
-        s->avail_pkt_q,
+        pkt_avail_q,
         ^(interface_event_t event_id, xpc_object_t event) {
           uint8_t dummy_byte;
           write(s->event_pipe_fd[1], &dummy_byte, 1);
