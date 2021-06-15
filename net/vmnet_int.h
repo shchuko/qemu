@@ -22,10 +22,7 @@ typedef struct VmnetCommonState {
   NetClientState nc;
   interface_ref vmnet_if;
 
-  /* vmnet interface is ready to receive packages from qemu */
   bool write_poll;
-
-  /* qemu is ready to receive packages from vmnet */
   bool read_poll;
 
   uint64_t mtu;
@@ -35,6 +32,8 @@ typedef struct VmnetCommonState {
   struct iovec *iov_buf;
 
   dispatch_queue_t avail_pkt_q;
+
+  int event_pipe_fd[2];
 } VmnetCommonState;
 
 const char *vmnet_status_map_str(vmnet_return_t status);
@@ -44,11 +43,10 @@ int vmnet_if_create(NetClientState *nc,
                     Error **errp,
                     void (*completion_callback)(xpc_object_t interface_param));
 
-bool vmnet_can_receive_common(NetClientState *nc);
-
 ssize_t vmnet_receive_iov_common(NetClientState *nc,
                                  const struct iovec *iov,
                                  int iovcnt);
 
+void vmnet_poll_common(NetClientState *nc, bool enable);
 
 #endif /* VMNET_INT_H */

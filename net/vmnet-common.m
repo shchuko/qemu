@@ -27,18 +27,18 @@ static void vmnet_read_poll(NetClientState *nc, bool enable);
 
 static void vmnet_write_poll(NetClientState *nc, bool enable);
 
-static bool vmnet_can_read(NetClientState *nc);
-
-static bool vmnet_can_write(NetClientState *nc);
-
 static void vmnet_bufs_init(VmnetCommonState *s);
 
 static vmpktdesc_t *iov_to_packets(const iovec_t *iov, int iovcnt,
                                    uint64_t max_packet_size, int *pkt_cnt);
 
-static void vmnet_read_handler(NetClientState *nc,
-                               interface_event_t event_id,
-                               xpc_object_t event);
+static void vmnet_create_event_pipe(VmnetCommonState *s);
+
+static void vmnet_send(void *opaque);
+
+static void vmnet_send_stub(void *opaque);
+
+static void vmnet_writable(void *opaque);
 
 static void vmnet_send_completed(NetClientState *nc, ssize_t len);
 
@@ -132,16 +132,18 @@ int vmnet_if_create(NetClientState *nc,
 
     vmnet_bufs_init(s);
 
+    vmnet_create_event_pipe(s);
     vmnet_read_poll(nc, true);
-    vmnet_write_poll(nc, true);
 
     return 0;
 }
 
-bool vmnet_can_receive_common(NetClientState *nc)
+void vmnet_poll_common(NetClientState *nc, bool enable)
 {
-    return vmnet_can_write(nc);
+    vmnet_read_poll(nc, enable);
+    vmnet_write_poll(nc, enable);
 }
+
 
 ssize_t vmnet_receive_iov_common(NetClientState *nc,
                                  const iovec_t *iov,
@@ -215,6 +217,23 @@ static void vmnet_bufs_init(VmnetCommonState *s)
     }
 }
 
+static void vmnet_create_event_pipe(VmnetCommonState *s)
+{
+    assert(s->vmnet_if != NULL);
+
+    pipe(s->event_pipe_fd);
+    fcntl(s->event_pipe_fd[0], F_SETFL, O_NONBLOCK);
+
+    vmnet_interface_set_event_callback(
+        s->vmnet_if,
+        VMNET_INTERFACE_PACKETS_AVAILABLE,
+        s->avail_pkt_q,
+        ^(interface_event_t event_id, xpc_object_t event) {
+          uint8_t dummy_byte;
+          write(s->event_pipe_fd[1], &dummy_byte, 1);
+        });
+}
+
 static vmpktdesc_t *iov_to_packets(const iovec_t *iov, int iovcnt,
                                    uint64_t max_packet_size, int *pkt_cnt)
 {
@@ -240,15 +259,10 @@ static vmpktdesc_t *iov_to_packets(const iovec_t *iov, int iovcnt,
     return packets;
 }
 
-static void vmnet_read_handler(NetClientState *nc,
-                               interface_event_t event_id,
-                               xpc_object_t event)
+static void vmnet_send(void *opaque)
 {
-    assert(event_id == VMNET_INTERFACE_PACKETS_AVAILABLE);
-    assert(vmnet_can_read(nc));
-
+    NetClientState *nc;
     VmnetCommonState *s;
-    uint64_t packets_available;
 
     iovec_t *iov;
     vmpktdesc_t *packets;
@@ -258,18 +272,11 @@ static void vmnet_read_handler(NetClientState *nc,
     vmnet_return_t if_status;
     ssize_t size;
 
+    nc = opaque;
     s = DO_UPCAST(VmnetCommonState, nc, nc);
+    vmnet_send_stub(opaque);
 
-    packets_available = xpc_dictionary_get_uint64(
-        event,
-        vmnet_estimated_packets_available_key
-    );
-
-    pkt_cnt = (packets_available < VMNET_PACKETS_LIMIT) ?
-              packets_available :
-              VMNET_PACKETS_LIMIT;
-
-
+    pkt_cnt = VMNET_PACKETS_LIMIT;
     iov = s->iov_buf;
     packets = s->packets_buf;
 
@@ -283,6 +290,7 @@ static void vmnet_read_handler(NetClientState *nc,
     if (if_status != VMNET_SUCCESS) {
         error_printf("vmnet: read failed: %s\n",
                      vmnet_status_map_str(if_status));
+        return;
     }
 
     for (i = 0; i < pkt_cnt; ++i) {
@@ -296,57 +304,44 @@ static void vmnet_read_handler(NetClientState *nc,
             break;
         }
     }
-
 }
 
+static void vmnet_send_stub(void *opaque)
+{
+    NetClientState *nc = opaque;
+    VmnetCommonState *s = DO_UPCAST(VmnetCommonState, nc, nc);
+
+    uint8_t dummy_byte;
+    while (read(s->event_pipe_fd[0], &dummy_byte, 1) > 0);
+}
+
+static void vmnet_writable(void *opaque)
+{
+    VmnetCommonState *s = opaque;
+    vmnet_write_poll(&s->nc, false);
+    qemu_flush_queued_packets(&s->nc);
+}
+
+static void vmnet_update_fd_handler(VmnetCommonState *s)
+{
+    qemu_set_fd_handler(s->event_pipe_fd[0],
+                        s->read_poll ? vmnet_send : vmnet_send_stub,
+                        s->write_poll ? vmnet_writable : NULL,
+                        s);
+}
 
 static void vmnet_read_poll(NetClientState *nc, bool enable)
 {
-    VmnetCommonState *s;
-
-    s = DO_UPCAST(VmnetCommonState, nc, nc);
-
-    if (s->read_poll == enable) {
-        return;
-    }
-
+    VmnetCommonState *s = DO_UPCAST(VmnetCommonState, nc, nc);
     s->read_poll = enable;
-
-    if (enable) {
-        vmnet_interface_set_event_callback(
-            s->vmnet_if,
-            VMNET_INTERFACE_PACKETS_AVAILABLE,
-            s->avail_pkt_q,
-            ^(interface_event_t event_id, xpc_object_t event) {
-              qemu_mutex_lock_iothread();
-              vmnet_read_handler(nc, event_id, event);
-              qemu_mutex_unlock_iothread();
-            });
-    } else {
-        vmnet_interface_set_event_callback(
-            s->vmnet_if,
-            VMNET_INTERFACE_PACKETS_AVAILABLE,
-            NULL,
-            NULL);
-    }
+    vmnet_update_fd_handler(s);
 }
 
 static void vmnet_write_poll(NetClientState *nc, bool enable)
 {
     VmnetCommonState *s = DO_UPCAST(VmnetCommonState, nc, nc);
     s->write_poll = enable;
-}
-
-static bool vmnet_can_read(NetClientState *nc)
-{
-    VmnetCommonState *s = DO_UPCAST(VmnetCommonState, nc, nc);
-    return s->read_poll;
-}
-
-static bool vmnet_can_write(NetClientState *nc)
-{
-    VmnetCommonState *s = DO_UPCAST(VmnetCommonState, nc, nc);
-    return s->write_poll;
+    vmnet_update_fd_handler(s);
 }
 
 static void vmnet_send_completed(NetClientState *nc, ssize_t len)
