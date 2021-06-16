@@ -28,7 +28,7 @@ static NetClientInfo net_vmnet_shared_info = {
     .type = NET_CLIENT_DRIVER_VMNET_SHARED,
     .size = sizeof(VmnetSharedState),
     .poll = vmnet_poll_common,
-    .receive_iov = vmnet_receive_iov_common,
+    .receive = vmnet_receive_common,
     .cleanup = vmnet_cleanup_common,
 };
 

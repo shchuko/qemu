@@ -41,9 +41,9 @@ int vmnet_if_create(NetClientState *nc,
                     Error **errp,
                     void (*completion_callback)(xpc_object_t interface_param));
 
-ssize_t vmnet_receive_iov_common(NetClientState *nc,
-                                 const struct iovec *iov,
-                                 int iovcnt);
+ssize_t vmnet_receive_common(NetClientState *nc,
+                             const uint8_t *buf,
+                             size_t size);
 
 void vmnet_poll_common(NetClientState *nc, bool enable);
 

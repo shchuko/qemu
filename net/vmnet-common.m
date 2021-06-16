@@ -137,34 +137,32 @@ void vmnet_poll_common(NetClientState *nc, bool enable)
 }
 
 
-ssize_t vmnet_receive_iov_common(NetClientState *nc,
-                                 const iovec_t *iov,
-                                 int iovcnt)
+ssize_t vmnet_receive_common(NetClientState *nc,
+                             const uint8_t *buf,
+                             size_t size)
 {
     VmnetCommonState *s;
     vmpktdesc_t packet;
+    iovec_t iov;
     int pkt_cnt;
-    int iov_no;
     vmnet_return_t if_status;
 
     s = DO_UPCAST(VmnetCommonState, nc, nc);
 
-    packet.vm_pkt_iovcnt = iovcnt;
-    packet.vm_flags = 0;
-    packet.vm_pkt_size = 0;
-    for (iov_no = 0; iov_no < iovcnt; ++iov_no) {
-        packet.vm_pkt_size += iov[iov_no].iov_len;
-    }
-
-    if (packet.vm_pkt_size > s->max_packet_size) {
+    if (size > s->max_packet_size) {
         warn_report("vmnet: packet is too big, %zu > %llu\n",
                     packet.vm_pkt_size,
                     s->max_packet_size);
         return -1;
     }
 
-    packet.vm_pkt_iov = g_new0(iovec_t, iovcnt);
-    memcpy(packet.vm_pkt_iov, iov, iovcnt * sizeof(iovec_t));
+    iov.iov_base = (char *) buf;
+    iov.iov_len = size;
+
+    packet.vm_pkt_iovcnt = 1;
+    packet.vm_flags = 0;
+    packet.vm_pkt_size = size;
+    packet.vm_pkt_iov = &iov;
 
     pkt_cnt = 1;
     if_status = vmnet_write(s->vmnet_if, &packet, &pkt_cnt);
@@ -174,7 +172,6 @@ ssize_t vmnet_receive_iov_common(NetClientState *nc,
                      vmnet_status_map_str(if_status));
     }
 
-    g_free(packet.vm_pkt_iov);
     if (if_status == VMNET_SUCCESS && pkt_cnt) {
         return packet.vm_pkt_size;
     }
