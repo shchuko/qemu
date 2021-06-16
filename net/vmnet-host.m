@@ -28,7 +28,7 @@ static NetClientInfo net_vmnet_host_info = {
     .type = NET_CLIENT_DRIVER_VMNET_HOST,
     .size = sizeof(VmnetHostState),
     .poll = vmnet_poll_common,
-    .receive_iov = vmnet_receive_iov_common,
+    .receive = vmnet_receive_common,
     .cleanup = vmnet_cleanup_common,
 };
 
